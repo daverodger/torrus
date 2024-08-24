@@ -1,5 +1,5 @@
-#![allow(unused)]
-use bendy::decoding::{Error as DecodeError, FromBencode, Object, ResultExt};
+// #![allow(unused)]
+use bendy::decoding::{Error as DecodeError, FromBencode, ResultExt};
 use bendy::encoding::{Error, SingleItemEncoder, ToBencode};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -24,6 +24,100 @@ struct InfoDictSingleFile {
     // This is not used by BitTorrent at all,
     // but it is included by some programs for greater compatibility.
     md5sum: Option<String>,
+}
+
+impl ToBencode for InfoDictSingleFile {
+    const MAX_DEPTH: usize = 3;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"length", &self.length)?;
+            if let Some(v) = &self.md5sum {
+                e.emit_pair(b"md5sum", v)?;
+            }
+            e.emit_pair(b"name", &self.name)?;
+            e.emit_pair(b"piece_length", &self.piece_length)?;
+            e.emit_pair(b"pieces", &self.pieces)?;
+            if let Some(v) = &self.private {
+                e.emit_pair(b"private", v)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl FromBencode for InfoDictSingleFile {
+    const EXPECTED_RECURSION_DEPTH: usize = 3;
+
+    fn decode_bencode_object(
+        object: bendy::decoding::Object,
+    ) -> Result<InfoDictSingleFile, DecodeError>
+    where
+        Self: Sized,
+    {
+        let mut name = None;
+        let mut md5sum = None;
+        let mut length = None;
+        let mut piece_length = None;
+        let mut pieces = None;
+        let mut private = None;
+
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"length", value) => {
+                    length = usize::decode_bencode_object(value)
+                        .context("length")
+                        .map(Some)?;
+                }
+                (b"name", value) => {
+                    name = String::decode_bencode_object(value)
+                        .context("name")
+                        .map(Some)?;
+                }
+                (b"md5sum", value) => {
+                    md5sum = String::decode_bencode_object(value)
+                        .context("md5sum")
+                        .map(Some)?;
+                }
+                (b"private", value) => {
+                    private = u8::decode_bencode_object(value)
+                        .context("private")
+                        .map(Some)?;
+                }
+                (b"pieces", value) => {
+                    pieces = String::decode_bencode_object(value)
+                        .context("pieces")
+                        .map(Some)?;
+                }
+                (b"piece_length", value) => {
+                    piece_length = usize::decode_bencode_object(value)
+                        .context("piece_length")
+                        .map(Some)?;
+                }
+                (unknown_field, _) => {
+                    return Err(DecodeError::unexpected_field(String::from_utf8_lossy(
+                        unknown_field,
+                    )))
+                }
+            }
+        }
+
+        let length = length.ok_or_else(|| DecodeError::missing_field("length"))?;
+        let name = name.ok_or_else(|| DecodeError::missing_field("name"))?;
+        let pieces = pieces.ok_or_else(|| DecodeError::missing_field("pieces"))?;
+        let piece_length =
+            piece_length.ok_or_else(|| DecodeError::missing_field("piece_length"))?;
+
+        Ok(InfoDictSingleFile {
+            length,
+            name,
+            md5sum,
+            pieces,
+            piece_length,
+            private,
+        })
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -120,13 +214,13 @@ impl FromBencode for InfoDictMultiFile {
         let piece_length =
             piece_length.ok_or_else(|| DecodeError::missing_field("piece_length"))?;
 
-        Ok((InfoDictMultiFile {
+        Ok(InfoDictMultiFile {
             files,
             name,
             pieces,
             piece_length,
             private,
-        }))
+        })
     }
 }
 
@@ -201,11 +295,11 @@ impl FromBencode for FileDict {
         let length = length.ok_or_else(|| DecodeError::missing_field("length"))?;
         let path = path.ok_or_else(|| DecodeError::missing_field("path"))?;
 
-        Ok((FileDict {
+        Ok(FileDict {
             length,
             md5sum,
             path,
-        }))
+        })
     }
 }
 
@@ -221,38 +315,32 @@ mod tests {
         }
     }
 
-    const ENCODED_WITHOUT_MD5: &[u8] = b"d6:lengthi100e4:pathl18:dir1/dir2/file.extee";
-    const ENCODED_WITH_MD5: &[u8] =
+    const FILE_ENCODED_WITHOUT_MD5: &[u8] = b"d6:lengthi100e4:pathl18:dir1/dir2/file.extee";
+    const FILE_ENCODED_WITH_MD5: &[u8] =
         b"d6:lengthi100e6:md5sum7:fakesum4:pathl18:dir1/dir2/file.extee";
 
     #[test]
     fn encode_file_dict() -> Result<(), Error> {
         let mut example = example_file_dict();
-
-        // Test encoding without md5sum
         let encoded = example.to_bencode()?;
-        assert_eq!(ENCODED_WITHOUT_MD5, encoded.as_slice());
+        assert_eq!(FILE_ENCODED_WITHOUT_MD5, encoded.as_slice());
 
-        // Test encoding with md5sum
         example.md5sum = Some("fakesum".to_string());
         let encoded = example.to_bencode()?;
-        assert_eq!(ENCODED_WITH_MD5, encoded.as_slice());
+        assert_eq!(FILE_ENCODED_WITH_MD5, encoded.as_slice());
 
         Ok(())
     }
 
     #[test]
     fn decode_file_dict() -> Result<(), DecodeError> {
-        // Test decoding without md5sum
-        let decoded = FileDict::from_bencode(ENCODED_WITHOUT_MD5)?;
-        let example = example_file_dict();
+        let decoded = FileDict::from_bencode(FILE_ENCODED_WITHOUT_MD5)?;
+        let mut example = example_file_dict();
         assert_eq!(decoded, example);
 
-        // Test decoding with md5sum
-        let mut example_with_md5 = example_file_dict();
-        example_with_md5.md5sum = Some("fakesum".to_string());
-        let decoded = FileDict::from_bencode(ENCODED_WITH_MD5)?;
-        assert_eq!(decoded, example_with_md5);
+        example.md5sum = Some("fakesum".to_string());
+        let decoded = FileDict::from_bencode(FILE_ENCODED_WITH_MD5)?;
+        assert_eq!(decoded, example);
 
         Ok(())
     }
@@ -267,38 +355,85 @@ mod tests {
         }
     }
 
-    const ENCODED_WITHOUT_PRIVATE: &[u8] = b"d5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefe";
-    const ENCODED_WITH_PRIVATE: &[u8] = b"d5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef7:privatei1ee";
+    const MULTI_ENCODED_WITHOUT_PRIVATE: &[u8] = b"d5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefe";
+    const MULTI_ENCODED_WITH_PRIVATE: &[u8] = b"d5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef7:privatei1ee";
 
     #[test]
     fn encode_info_dict_multi_file() -> Result<(), Error> {
-        let example = example_info_dict_multi_file();
+        let mut example = example_info_dict_multi_file();
 
-        // Test encoding without private field
         let encoded = example.to_bencode()?;
-        assert_eq!(ENCODED_WITHOUT_PRIVATE, encoded.as_slice());
+        assert_eq!(MULTI_ENCODED_WITHOUT_PRIVATE, encoded.as_slice());
 
-        // Test encoding with private field
-        let mut example_with_private = example;
-        example_with_private.private = Some(1);
-        let encoded = example_with_private.to_bencode()?;
-        assert_eq!(ENCODED_WITH_PRIVATE, encoded.as_slice());
+        example.private = Some(1);
+        let encoded = example.to_bencode()?;
+        assert_eq!(MULTI_ENCODED_WITH_PRIVATE, encoded.as_slice());
 
         Ok(())
     }
 
     #[test]
     fn decode_info_dict_multi_file() -> Result<(), DecodeError> {
-        // Test decoding without md5sum
-        let decoded = InfoDictMultiFile::from_bencode(ENCODED_WITHOUT_PRIVATE)?;
-        let example = example_info_dict_multi_file();
+        let decoded = InfoDictMultiFile::from_bencode(MULTI_ENCODED_WITHOUT_PRIVATE)?;
+        let mut example = example_info_dict_multi_file();
         assert_eq!(decoded, example);
 
-        // Test decoding with md5sum
-        let mut example_with_private = example;
-        example_with_private.private = Some(1);
-        let decoded = InfoDictMultiFile::from_bencode(ENCODED_WITH_PRIVATE)?;
-        assert_eq!(decoded, example_with_private);
+        example.private = Some(1);
+        let decoded = InfoDictMultiFile::from_bencode(MULTI_ENCODED_WITH_PRIVATE)?;
+        assert_eq!(decoded, example);
+
+        Ok(())
+    }
+
+    fn example_info_dict_single_file() -> InfoDictSingleFile {
+        InfoDictSingleFile {
+            piece_length: 256,
+            pieces: "fakenews123".to_string(),
+            private: None,
+            length: 25600,
+            name: "singlefile.txt".to_string(),
+            md5sum: None,
+        }
+    }
+
+    const SINGLE_ENCODED_WO_PRIV_SUM: &[u8] =
+        b"d6:lengthi25600e4:name14:singlefile.txt12:piece_lengthi256e6:pieces11:fakenews123e";
+    const SINGLE_ENCODED_W_SUM: &[u8] =
+        b"d6:lengthi25600e6:md5sum4:hash4:name14:singlefile.txt12:piece_lengthi256e6:pieces11:fakenews123e";
+    const SINGLE_ENCODED_FULL: &[u8] =
+            b"d6:lengthi25600e6:md5sum4:hash4:name14:singlefile.txt12:piece_lengthi256e6:pieces11:fakenews1237:privatei1ee";
+
+    #[test]
+    fn encode_info_dict_single_file() -> Result<(), Error> {
+        let mut example = example_info_dict_single_file();
+
+        let encoded = example.to_bencode()?;
+        assert_eq!(SINGLE_ENCODED_WO_PRIV_SUM, encoded.as_slice());
+
+        example.md5sum = Some("hash".to_string());
+        let encoded = example.to_bencode()?;
+        assert_eq!(SINGLE_ENCODED_W_SUM, encoded.as_slice());
+
+        example.private = Some(1);
+        let encoded = example.to_bencode()?;
+        assert_eq!(SINGLE_ENCODED_FULL, encoded.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn decode_info_dict_single_file() -> Result<(), DecodeError> {
+        let decoded = InfoDictSingleFile::from_bencode(SINGLE_ENCODED_WO_PRIV_SUM)?;
+        let mut example = example_info_dict_single_file();
+        assert_eq!(decoded, example);
+
+        example.md5sum = Some("hash".to_string());
+        let decoded = InfoDictSingleFile::from_bencode(SINGLE_ENCODED_W_SUM)?;
+        assert_eq!(decoded, example);
+
+        example.private = Some(1);
+        let decoded = InfoDictSingleFile::from_bencode(SINGLE_ENCODED_FULL)?;
+        assert_eq!(decoded, example);
 
         Ok(())
     }
