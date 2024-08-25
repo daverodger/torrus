@@ -1,8 +1,87 @@
 // #![allow(unused)]
-use bendy::decoding::{Error as DecodeError, FromBencode, ResultExt};
+use bendy::decoding::{Error as DecodeError, FromBencode, Object, ResultExt};
 use bendy::encoding::{Error, SingleItemEncoder, ToBencode};
+use serde_derive::{Deserialize, Serialize};
 
-#[derive(Debug, Eq, PartialEq)]
+struct MetaInfoFile {
+    // a dictionary that describes the file(s) of the torrent. There are two possible forms:
+    // one for the case of a 'single-file' torrent with no directory structure,
+    // and one for the case of a 'multi-file' torrent (see below for details)
+    info: InfoFile,
+    // The announce URL of the tracker (string)
+    announce: String,
+    // (optional) this is an extention to the official specification,
+    // offering backwards-compatibility. (list of lists of strings).
+    announce_list: Option<AnnounceList>,
+    // (optional) the creation time of the torrent, in standard UNIX epoch format
+    // (integer, seconds since 1-Jan-1970 00:00:00 UTC)
+    creation_date: u64,
+    // (optional) free-form textual comments of the author (string)
+    comment: String,
+    // (optional) name and version of the program used to create the .torrent (string)
+    created_by: String,
+    // (optional) the string encoding format used to generate the pieces part of the
+    // info dictionary in the .torrent metafile (string)
+    encoding: String,
+}
+
+impl ToBencode for MetaInfoFile {
+    const MAX_DEPTH: usize = 3;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"announce", &self.announce)?;
+            if let Some(v) = &self.announce_list {
+                e.emit_pair(b"announce_list", v.to_bencode()?)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+enum InfoFile {
+    IntoDictSingleFile,
+    IntoDictMultiFile,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct AnnounceList(Vec<Vec<String>>);
+
+impl ToBencode for AnnounceList {
+    const MAX_DEPTH: usize = 2;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
+        encoder.emit_list(|e| {
+            for inner in &self.0 {
+                e.emit_list(|e| {
+                    for url in inner {
+                        e.emit_str(&url)?;
+                    }
+                    Ok(())
+                })?;
+            }
+
+            Ok(())
+        })
+    }
+}
+
+impl FromBencode for AnnounceList {
+    fn decode_bencode_object(object: Object) -> Result<Self, DecodeError>
+    where
+        Self: Sized,
+    {
+        let mut result = AnnounceList(vec![]);
+        let mut outer_decoder = object.try_into_list()?;
+        while let Some(inner) = outer_decoder.next_object()? {
+            result.0.push(Vec::<String>::decode_bencode_object(inner)?);
+        }
+        Ok(result)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 struct InfoDictSingleFile {
     // number of bytes in each piece (integer)
     piece_length: usize,
@@ -49,9 +128,7 @@ impl ToBencode for InfoDictSingleFile {
 impl FromBencode for InfoDictSingleFile {
     const EXPECTED_RECURSION_DEPTH: usize = 3;
 
-    fn decode_bencode_object(
-        object: bendy::decoding::Object,
-    ) -> Result<InfoDictSingleFile, DecodeError>
+    fn decode_bencode_object(object: Object) -> Result<InfoDictSingleFile, DecodeError>
     where
         Self: Sized,
     {
@@ -120,7 +197,7 @@ impl FromBencode for InfoDictSingleFile {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 struct InfoDictMultiFile {
     // number of bytes in each piece (integer)
     piece_length: usize,
@@ -160,9 +237,7 @@ impl ToBencode for InfoDictMultiFile {
 impl FromBencode for InfoDictMultiFile {
     const EXPECTED_RECURSION_DEPTH: usize = 3;
 
-    fn decode_bencode_object(
-        object: bendy::decoding::Object,
-    ) -> Result<InfoDictMultiFile, DecodeError>
+    fn decode_bencode_object(object: Object) -> Result<InfoDictMultiFile, DecodeError>
     where
         Self: Sized,
     {
@@ -224,7 +299,7 @@ impl FromBencode for InfoDictMultiFile {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 struct FileDict {
     // length of the file in bytes (integer)
     length: usize,
@@ -255,7 +330,7 @@ impl ToBencode for FileDict {
 impl FromBencode for FileDict {
     const EXPECTED_RECURSION_DEPTH: usize = 2;
 
-    fn decode_bencode_object(object: bendy::decoding::Object) -> Result<FileDict, DecodeError>
+    fn decode_bencode_object(object: Object) -> Result<FileDict, DecodeError>
     where
         Self: Sized,
     {
@@ -435,6 +510,30 @@ mod tests {
         let decoded = InfoDictSingleFile::from_bencode(SINGLE_ENCODED_FULL)?;
         assert_eq!(decoded, example);
 
+        Ok(())
+    }
+
+    fn example_announce_list() -> AnnounceList {
+        AnnounceList(vec![
+            vec!["url1a".to_string(), "url1b".to_string()],
+            vec!["url2".to_string()],
+        ])
+    }
+
+    #[test]
+    fn encode_announce_list() -> Result<(), Error> {
+        let example = example_announce_list();
+        let example = example.to_bencode()?;
+        let encoded = b"ll5:url1a5:url1bel4:url2ee".to_vec();
+        assert_eq!(encoded, example);
+        Ok(())
+    }
+
+    #[test]
+    fn decode_announce_list() -> Result<(), DecodeError> {
+        let encoded = b"ll5:url1a5:url1bel4:url2ee";
+        let example = example_announce_list();
+        assert_eq!(AnnounceList::from_bencode(encoded)?, example);
         Ok(())
     }
 }
