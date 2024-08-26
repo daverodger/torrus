@@ -15,25 +15,39 @@ struct MetaInfoFile {
     announce_list: Option<AnnounceList>,
     // (optional) the creation time of the torrent, in standard UNIX epoch format
     // (integer, seconds since 1-Jan-1970 00:00:00 UTC)
-    creation_date: u64,
+    creation_date: Option<u64>,
     // (optional) free-form textual comments of the author (string)
-    comment: String,
+    comment: Option<String>,
     // (optional) name and version of the program used to create the .torrent (string)
-    created_by: String,
+    created_by: Option<String>,
     // (optional) the string encoding format used to generate the pieces part of the
     // info dictionary in the .torrent metafile (string)
-    encoding: String,
+    encoding: Option<String>,
 }
 
 impl ToBencode for MetaInfoFile {
-    const MAX_DEPTH: usize = 3;
+    const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"announce", &self.announce)?;
             if let Some(v) = &self.announce_list {
-                e.emit_pair(b"announce_list", v.to_bencode()?)?;
+                e.emit_pair(b"announce_list", v)?;
             }
+            if let Some(v) = &self.comment {
+                e.emit_pair(b"comment", v)?;
+            }
+            if let Some(v) = &self.created_by {
+                e.emit_pair(b"created_by", v)?;
+            }
+            if let Some(v) = &self.creation_date {
+                e.emit_pair(b"creation_date", v)?;
+            }
+            if let Some(v) = &self.encoding {
+                e.emit_pair(b"encoding", v)?;
+            }
+            e.emit_pair(b"info", &self.info)?;
+
             Ok(())
         })
     }
@@ -41,8 +55,30 @@ impl ToBencode for MetaInfoFile {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 enum InfoFile {
-    IntoDictSingleFile,
-    IntoDictMultiFile,
+    Single(InfoDictSingleFile),
+    Multi(InfoDictMultiFile),
+}
+
+impl InfoFile {
+    fn from_single(single: InfoDictSingleFile) -> Self {
+        InfoFile::Single(single)
+    }
+
+    fn from_multi(multi: InfoDictMultiFile) -> Self {
+        InfoFile::Multi(multi)
+    }
+}
+
+impl ToBencode for InfoFile {
+    const MAX_DEPTH: usize = 1;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
+        match &self {
+            InfoFile::Single(file) => encoder.emit(file)?,
+            InfoFile::Multi(file) => encoder.emit(file)?,
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -73,8 +109,8 @@ impl FromBencode for AnnounceList {
         Self: Sized,
     {
         let mut result = AnnounceList(vec![]);
-        let mut outer_decoder = object.try_into_list()?;
-        while let Some(inner) = outer_decoder.next_object()? {
+        let mut decoder = object.try_into_list()?;
+        while let Some(inner) = decoder.next_object()? {
             result.0.push(Vec::<String>::decode_bencode_object(inner)?);
         }
         Ok(result)
@@ -534,6 +570,28 @@ mod tests {
         let encoded = b"ll5:url1a5:url1bel4:url2ee";
         let example = example_announce_list();
         assert_eq!(AnnounceList::from_bencode(encoded)?, example);
+        Ok(())
+    }
+
+    fn example_meta_info_file_multi() -> MetaInfoFile {
+        MetaInfoFile {
+            info: InfoFile::from_multi(example_info_dict_multi_file()),
+            announce: "announcer".to_string(),
+            announce_list: Some(example_announce_list()),
+            creation_date: Some(333),
+            comment: Some("comments".to_string()),
+            created_by: Some("creator".to_string()),
+            encoding: Some("utf8".to_string()),
+        }
+    }
+
+    const META_ENCODED_MULTI: &[u8] = b"d8:announce9:announcer13:announce_listll5:url1a5:url1bel4:url2ee7:comment8:comments10:created_by7:creator13:creation_datei333e8:encoding4:utf84:infod5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefee";
+
+    #[test]
+    fn meta_file() -> Result<(), Error> {
+        let example = example_meta_info_file_multi();
+        let encoded = example.to_bencode()?;
+        assert_eq!(encoded, META_ENCODED_MULTI);
         Ok(())
     }
 }
