@@ -586,12 +586,17 @@ mod tests {
     }
 
     const META_ENCODED_MULTI: &[u8] = b"d8:announce9:announcer13:announce_listll5:url1a5:url1bel4:url2ee7:comment8:comments10:created_by7:creator13:creation_datei333e8:encoding4:utf84:infod5:filesd6:lengthi100e4:pathl18:dir1/dir2/file.extee4:name17:example_directory12:piece_lengthi256e6:pieces64:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefee";
+    const META_ENCODED_SINGLE: &[u8] = b"d8:announce9:announcer13:announce_listll5:url1a5:url1bel4:url2ee7:comment8:comments10:created_by7:creator13:creation_datei333e8:encoding4:utf84:infod6:lengthi25600e4:name14:singlefile.txt12:piece_lengthi256e6:pieces11:fakenews123ee";
 
     #[test]
     fn meta_file() -> Result<(), Error> {
-        let example = example_meta_info_file_multi();
+        let mut example = example_meta_info_file_multi();
         let encoded = example.to_bencode()?;
         assert_eq!(encoded, META_ENCODED_MULTI);
+
+        example.info = InfoFile::from_single(example_info_dict_single_file());
+        let encoded = example.to_bencode()?;
+        assert_eq!(encoded, META_ENCODED_SINGLE);
         Ok(())
     }
 }
