@@ -1,8 +1,8 @@
-// #![allow(unused)]
 use bendy::decoding::{Error as DecodeError, FromBencode, Object, ResultExt};
 use bendy::encoding::{Error, SingleItemEncoder, ToBencode};
 use serde_derive::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 struct MetaInfoFile {
     // a dictionary that describes the file(s) of the torrent. There are two possible forms:
     // one for the case of a 'single-file' torrent with no directory structure,
@@ -53,6 +53,80 @@ impl ToBencode for MetaInfoFile {
     }
 }
 
+impl FromBencode for MetaInfoFile {
+    fn decode_bencode_object(object: Object) -> Result<Self, DecodeError>
+    where
+        Self: Sized,
+    {
+        let mut info = None;
+        let mut announce = None;
+        let mut announce_list = None;
+        let mut creation_date = None;
+        let mut comment = None;
+        let mut created_by = None;
+        let mut encoding = None;
+
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"info", value) => {
+                    info = InfoFile::decode_bencode_object(value)
+                        .context("info")
+                        .map(Some)?;
+                }
+                (b"announce", value) => {
+                    announce = String::decode_bencode_object(value)
+                        .context("announce")
+                        .map(Some)?;
+                }
+                (b"announce_list", value) => {
+                    announce_list = AnnounceList::decode_bencode_object(value)
+                        .context("announce_list")
+                        .map(Some)?;
+                }
+                (b"creation_date", value) => {
+                    creation_date = u64::decode_bencode_object(value)
+                        .context("creation_date")
+                        .map(Some)?;
+                }
+                (b"comment", value) => {
+                    comment = String::decode_bencode_object(value)
+                        .context("comment")
+                        .map(Some)?;
+                }
+                (b"created_by", value) => {
+                    created_by = String::decode_bencode_object(value)
+                        .context("created_by")
+                        .map(Some)?;
+                }
+                (b"encoding", value) => {
+                    encoding = String::decode_bencode_object(value)
+                        .context("encoding")
+                        .map(Some)?;
+                }
+                (unknown_field, _) => {
+                    return Err(DecodeError::unexpected_field(String::from_utf8_lossy(
+                        unknown_field,
+                    )))
+                }
+            }
+        }
+
+        let info = info.ok_or_else(|| DecodeError::missing_field("info"))?;
+        let announce = announce.ok_or_else(|| DecodeError::missing_field("announce"))?;
+
+        Ok(MetaInfoFile {
+            info,
+            announce,
+            announce_list,
+            creation_date,
+            comment,
+            created_by,
+            encoding,
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 enum InfoFile {
     Single(InfoDictSingleFile),
@@ -78,6 +152,24 @@ impl ToBencode for InfoFile {
             InfoFile::Multi(file) => encoder.emit(file)?,
         }
         Ok(())
+    }
+}
+
+impl FromBencode for InfoFile {
+    fn decode_bencode_object(object: Object) -> Result<Self, DecodeError>
+    where
+        Self: Sized,
+    {
+        let result: InfoFile;
+        let object = object.try_into_dictionary()?.into_raw()?;
+
+        if let Ok(var) = InfoDictSingleFile::from_bencode(object) {
+            result = InfoFile::from_single(var);
+        } else {
+            result = InfoFile::from_multi(InfoDictMultiFile::from_bencode(object)?);
+        }
+
+        Ok(result)
     }
 }
 
@@ -589,7 +681,7 @@ mod tests {
     const META_ENCODED_SINGLE: &[u8] = b"d8:announce9:announcer13:announce_listll5:url1a5:url1bel4:url2ee7:comment8:comments10:created_by7:creator13:creation_datei333e8:encoding4:utf84:infod6:lengthi25600e4:name14:singlefile.txt12:piece_lengthi256e6:pieces11:fakenews123ee";
 
     #[test]
-    fn meta_file() -> Result<(), Error> {
+    fn encode_meta_file() -> Result<(), Error> {
         let mut example = example_meta_info_file_multi();
         let encoded = example.to_bencode()?;
         assert_eq!(encoded, META_ENCODED_MULTI);
@@ -597,6 +689,18 @@ mod tests {
         example.info = InfoFile::from_single(example_info_dict_single_file());
         let encoded = example.to_bencode()?;
         assert_eq!(encoded, META_ENCODED_SINGLE);
+        Ok(())
+    }
+
+    #[test]
+    fn decode_meta_file() -> Result<(), DecodeError> {
+        let decoded = MetaInfoFile::from_bencode(META_ENCODED_MULTI)?;
+        let mut example = example_meta_info_file_multi();
+        assert_eq!(decoded, example);
+
+        example.info = InfoFile::from_single(example_info_dict_single_file());
+        let decoded = MetaInfoFile::from_bencode(META_ENCODED_SINGLE)?;
+        assert_eq!(decoded, example);
         Ok(())
     }
 }
