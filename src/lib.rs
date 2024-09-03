@@ -1,1 +1,4 @@
-mod metainfo_types;
+mod metainfo;
+mod util;
+
+pub use metainfo::*;
