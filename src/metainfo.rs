@@ -598,13 +598,14 @@ impl FromBencode for FileDict {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Struct to represent a collection of 20-byte SHA1 hash pieces as raw byte strings
-struct Pieces(Vec<[u8; 20]>);
+pub struct Pieces(Vec<[u8; 20]>);
 
 impl ToBencode for Pieces {
     const MAX_DEPTH: usize = 0;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
-        todo!()
+        let content = AsString(self.0.as_flattened());
+        encoder.emit(&content)
     }
 }
 
@@ -680,7 +681,6 @@ mod tests {
     const MULTI_ENCODED_WITH_PRIVATE: &[u8] = b"d5:filesld6:lengthi100e4:pathl18:dir1/dir2/file.exteee4:name17:example_directory12:piece lengthi256e6:pieces40:00000000000000000000111111111111111111117:privatei1ee";
 
     #[test]
-    #[ignore]
     fn encode_info_dict_multi_file() -> Result<(), Error> {
         let mut example = example_info_dict_multi_file();
 
@@ -726,7 +726,6 @@ mod tests {
             b"d6:lengthi25600e6:md5sum4:hash4:name14:singlefile.txt12:piece lengthi256e6:pieces40:00000000000000000000111111111111111111117:privatei1ee";
 
     #[test]
-    #[ignore]
     fn encode_info_dict_single_file() -> Result<(), Error> {
         let mut example = example_info_dict_single_file();
 
@@ -801,7 +800,6 @@ mod tests {
     const META_ENCODED_SINGLE: &[u8] = b"d8:announce9:announcer13:announce-listll5:url1a5:url1bel4:url2ee7:comment8:comments10:created by7:creator13:creation datei333e8:encoding4:utf84:infod6:lengthi25600e4:name14:singlefile.txt12:piece lengthi256e6:pieces40:0000000000000000000011111111111111111111ee";
 
     #[test]
-    #[ignore]
     fn encode_meta_file() -> Result<(), Error> {
         let mut example = example_meta_info_file_multi();
         let encoded = example.to_bencode()?;
