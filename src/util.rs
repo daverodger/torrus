@@ -3,7 +3,7 @@ use bendy::decoding::{Error, FromBencode};
 use std::fs;
 use std::path::Path;
 
-fn parse_meta_file(path: &Path) -> Result<MetaInfoFile, Error> {
+pub fn parse_meta_file(path: &Path) -> Result<MetaInfoFile, Error> {
     let bytes = fs::read(path)?;
     MetaInfoFile::from_bencode(&bytes)
 }
@@ -19,7 +19,7 @@ mod tests {
         let parsed = parse_meta_file(&path)?;
         assert_eq!(
             parsed.announce,
-            "udp://tracker.opentrackr.org:1337/".to_string()
+            "udp://tracker.opentrackr.org:1337/announce".to_string()
         );
         Ok(())
     }
