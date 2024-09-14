@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.88"
 bendy = "0.3.3"
 serde = "1.0.208"
 serde_derive = "1.0.208"
+serde_urlencoded = "0.7.1"
+sha1 = "0.10.6"
 
 [[bin]]
 name = "print"
