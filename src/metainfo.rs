@@ -203,7 +203,7 @@ impl InfoFile {
 }
 
 impl ToBencode for InfoFile {
-    const MAX_DEPTH: usize = 2;
+    const MAX_DEPTH: usize = 4;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), Error> {
         match &self {
